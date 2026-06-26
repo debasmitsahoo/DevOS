@@ -1,0 +1,379 @@
+// DevOS — Prisma schema (blueprint §7.1)
+// Prisma owns the schema & migrations; Supabase is the Postgres host.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Identity ─────────────────────────
+model User {
+  id          String    @id @default(cuid())
+  clerkUserId String    @unique
+  email       String    @unique
+  handle      String?   @unique // devos.app/{handle}
+  role        Role      @default(DEVELOPER)
+  plan        Plan      @default(FREE)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime? // soft delete
+
+  profile         Profile?
+  connections     Connection[]
+  repositories    Repository[]
+  articles        Article[]
+  contestProfiles ContestProfile[]
+  certificates    Certificate[]
+  milestones      Milestone[]
+  scores          Score[]
+  resumes         Resume[]
+  memberships     CommunityMember[]
+  notifications   Notification[]
+  followers       Follow[]          @relation("following")
+  following       Follow[]          @relation("follower")
+
+  @@index([handle])
+  @@map("users")
+}
+
+model Profile {
+  id          String     @id @default(cuid())
+  userId      String     @unique
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String?
+  bio         String?    @db.Text
+  avatarUrl   String?
+  bannerUrl   String?
+  location    String?
+  website     String?
+  openToWork  Boolean    @default(false)
+  socials     Json? // {github, x, linkedin, ...}
+  skills      String[] // user-curated tags
+  experience  Json? // array of roles
+  education   Json?
+  visibility  Visibility @default(PUBLIC)
+
+  @@map("profiles")
+}
+
+// ───────────────────────── Connectors ─────────────────────────
+model Connection {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source       Source
+  sourceUserId String
+  sourceUrl    String?
+  status       ConnStatus @default(ACTIVE)
+  accessToken  String?    @db.Text // encrypted at rest (app-layer libsodium)
+  verifiedAt   DateTime?
+  lastSyncedAt DateTime?
+  syncJobs     SyncJob[]
+  raw          Json?
+
+  @@unique([userId, source])
+  @@index([source, sourceUserId])
+  @@map("connections")
+}
+
+model SyncJob {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  status       JobStatus  @default(QUEUED)
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  itemsSynced  Int        @default(0)
+  error        String?    @db.Text
+  createdAt    DateTime   @default(now())
+
+  @@index([status])
+  @@map("sync_jobs")
+}
+
+// ───────────────────────── Code ─────────────────────────
+model Repository {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source       Source    @default(GITHUB)
+  sourceId     String
+  name         String
+  fullName     String
+  description  String?   @db.Text
+  url          String
+  stars        Int       @default(0)
+  forks        Int       @default(0)
+  primaryLang  String?
+  languages    Json? // {TypeScript: 80.2, CSS: 19.8}
+  contributors Int       @default(0)
+  pinned       Boolean   @default(false)
+  pushedAt     DateTime?
+  raw          Json?
+
+  @@unique([source, sourceId])
+  @@index([userId, pinned])
+  @@map("repositories")
+}
+
+// ───────────────────────── Writing ─────────────────────────
+model Article {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source      Source // DEVTO | HASHNODE
+  sourceId    String
+  title       String
+  url         String
+  coverUrl    String?
+  readingMin  Int?
+  reactions   Int       @default(0)
+  comments    Int       @default(0)
+  tags        String[]
+  publishedAt DateTime?
+  raw         Json?
+
+  @@unique([source, sourceId])
+  @@index([userId])
+  @@map("articles")
+}
+
+// ─────────────── Problem-Solving (contests) ───────────────
+model ContestProfile {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source        Source // CODEFORCES | LEETCODE(v2)
+  handle        String
+  rating        Int?
+  maxRating     Int?
+  rank          String? // "Expert", "Knight", ...
+  solvedCount   Int            @default(0)
+  diffBreakdown Json? // {easy, medium, hard}
+  heatmap       Json? // {date: count}
+  entries       ContestEntry[]
+  raw           Json?
+
+  @@unique([userId, source])
+  @@map("contest_profiles")
+}
+
+model ContestEntry {
+  id          String         @id @default(cuid())
+  profileId   String
+  profile     ContestProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  contestName String
+  ratingDelta Int?
+  newRating   Int?
+  rank        Int?
+  occurredAt  DateTime
+
+  @@map("contest_entries")
+}
+
+// ───────────────────────── Credentials ─────────────────────────
+model Certificate {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source        Source
+  title         String
+  issuer        String
+  credentialUrl String?
+  verifiedAt    DateTime?
+  issuedAt      DateTime?
+
+  @@map("certificates")
+}
+
+// ─────────────────── Milestones / Timeline ───────────────────
+model Milestone {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        MilestoneType // HACKATHON | AWARD | TALK | LEADERSHIP | OSS | CUSTOM
+  title       String
+  description String?       @db.Text
+  link        String?
+  verified    Boolean       @default(false) // true only if source-derived
+  occurredAt  DateTime
+
+  @@index([userId, occurredAt])
+  @@map("milestones")
+}
+
+// ───────────────────────── Reputation ─────────────────────────
+model Score {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  total       Int // 0-100
+  pillars     Json // {code, solving, writing, community, consistency}
+  algoVersion String // "score@1.3.0"
+  events      ScoreEvent[] // explainability
+  createdAt   DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@map("scores")
+}
+
+model ScoreEvent {
+  id      String @id @default(cuid())
+  scoreId String
+  score   Score  @relation(fields: [scoreId], references: [id], onDelete: Cascade)
+  pillar  String
+  reason  String // "+4: 12 merged PRs in >50★ repos"
+  points  Float
+
+  @@map("score_events")
+}
+
+// ───────────────────────── Résumé ─────────────────────────
+model Resume {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetRole String
+  template   ResumeTemplate
+  content    Json // structured, editable
+  createdAt  DateTime       @default(now())
+
+  @@map("resumes")
+}
+
+// ───────────────────────── Community ─────────────────────────
+model Community {
+  id          String            @id @default(cuid())
+  slug        String            @unique
+  name        String
+  description String?           @db.Text
+  skillFocus  String[]
+  members     CommunityMember[]
+  events      Event[]
+  createdAt   DateTime          @default(now())
+
+  @@map("communities")
+}
+
+model CommunityMember {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  communityId String
+  community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  role        MemberRole @default(MEMBER)
+  joinedAt    DateTime   @default(now())
+
+  @@unique([userId, communityId])
+  @@map("community_members")
+}
+
+model Event {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  title       String
+  startsAt    DateTime
+  endsAt      DateTime?
+
+  @@map("events")
+}
+
+// ───────────────────────── Social / System ─────────────────────────
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  follower    User     @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// ───────────────────────── Enums ─────────────────────────
+enum Role {
+  DEVELOPER
+  RECRUITER
+  ADMIN
+}
+
+enum Plan {
+  FREE
+  STUDENT
+  PRO
+  RECRUITER
+}
+
+enum Source {
+  GITHUB
+  CODEFORCES
+  DEVTO
+  HASHNODE
+  LEETCODE
+  HACKERRANK
+  STACKOVERFLOW
+  KAGGLE
+  LINKEDIN
+  GOOGLE
+}
+
+enum ConnStatus {
+  ACTIVE
+  STALE
+  ERROR
+  REVOKED
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum MilestoneType {
+  HACKATHON
+  AWARD
+  TALK
+  LEADERSHIP
+  OSS
+  CUSTOM
+}
+
+enum ResumeTemplate {
+  MODERN
+  MINIMAL
+  ATS
+  STARTUP
+  GOOGLE
+}
+
+enum MemberRole {
+  OWNER
+  MODERATOR
+  MEMBER
+}
