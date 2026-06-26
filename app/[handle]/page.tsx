@@ -20,6 +20,7 @@ import { RadarChart } from "@/components/charts/radar-chart";
 import { SOURCES } from "@/config/sources";
 import { getPassport } from "@/server/queries/passport";
 import { compact } from "@/lib/utils";
+import { GithubIcon } from "@/components/icons/github";
 
 interface Props {
   params: Promise<{ handle: string }>;
@@ -77,7 +78,7 @@ export default async function PassportPage({ params }: Props) {
           <div className="flex items-center gap-2 pb-1">
             {data.socials.github && (
               <a href={data.socials.github} target="_blank" rel="noreferrer" className="rounded-md border bg-card p-2 hover:bg-accent">
-                <Github className="size-4" />
+                <GithubIcon className="size-4" />
               </a>
             )}
             {data.website && (
